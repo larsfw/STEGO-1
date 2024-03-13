@@ -1,6 +1,6 @@
-output_root: '../'
-pytorch_data_dir: '/datadrive/pytorch-data/'
-experiment_name: "cocostuff"
+output_root: "../"
+pytorch_data_dir: "D:/waglar/pytorch_datasets"
+experiment_name: "potsdam_evaluation"
 res: 320
 batch_size: 8
 num_workers: 24
@@ -11,9 +11,11 @@ dark_mode: True
 use_ddp: False
 
 model_paths:
-  - "../saved_models/cocostuff27_vit_base_5.ckpt"
+  #- "../saved_models/cocostuff27_vit_base_5.ckpt"
   #- "../saved_models/cityscapes_vit_base_1.ckpt"
-  #- "../saved_models/potsdam_test.ckpt"
+  #- "D:/waglar/saved_models/potsdam_test.ckpt"
+  #- "D:/waglar/checkpoints/potsdam/potsdam_3cluster_date_Feb13_16-34-51/epoch=2-step=2400.ckpt"
+  - "D:/waglar/checkpoints/potsdam/potsdam_six_channel_data_date_Jan28_17-35-38/epoch=7-step=6000.ckpt"
 
 hydra:
   run:
