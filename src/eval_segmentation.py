@@ -138,11 +138,39 @@ def my_app(cfg: DictConfig) -> None:
         with Pool(cfg.num_workers + 5) as pool:
             for i, batch in enumerate(tqdm(test_loader)):
                 with torch.no_grad():
-                    img = batch["img"].cuda()
+                    if hasattr(model, "cfg") and hasattr(model.cfg, "fusion_type"):
+                        if (
+                            model.cfg.fusion_type == "fusion0"
+                            or model.cfg.fusion_type == "fusion1"
+                        ):
+                            img = batch["img1"].cuda()
+                        if (
+                            model.cfg.fusion_type == "fusion2"
+                            or model.cfg.fusion_type == "fusion3"
+                        ):
+                            img = batch["img"].cuda()
+                            ndsm = batch["ndsm"].cuda()
+                        else:
+                            img = batch["img"].cuda()
+                    else:
+                        img = batch["img"].cuda()
                     label = batch["label"].cuda()
 
-                    feats, code1 = par_model(img)
-                    feats, code2 = par_model(img.flip(dims=[3]))
+                    if hasattr(model, "cfg") and hasattr(model.cfg, "fusion_type"):
+                        if (
+                            model.cfg.fusion_type == "fusion2"
+                            or model.cfg.fusion_type == "fusion3"
+                        ):
+                            feats, code1 = par_model(img, ndsm)
+                            feats, code2 = par_model(
+                                img.flip(dims=[3]), ndsm.flip(dims=[3])
+                            )
+                        else:
+                            feats, code1 = par_model(img)
+                            feats, code2 = par_model(img.flip(dims=[3]))
+                    else:
+                        feats, code1 = par_model(img)
+                        feats, code2 = par_model(img.flip(dims=[3]))
                     code = (code1 + code2.flip(dims=[3])) / 2
 
                     code = F.interpolate(

@@ -15,7 +15,20 @@ model_paths:
   #- "../saved_models/cityscapes_vit_base_1.ckpt"
   #- "D:/waglar/saved_models/potsdam_test.ckpt"
   #- "D:/waglar/checkpoints/potsdam/potsdam_3cluster_date_Feb13_16-34-51/epoch=2-step=2400.ckpt"
-  - "D:/waglar/checkpoints/potsdam/potsdam_six_channel_data_date_Jan28_17-35-38/epoch=7-step=6000.ckpt"
+  #- "D:/waglar/checkpoints/potsdam/potsdam_six_channel_data_date_Jan28_17-35-38/epoch=7-step=6000.ckpt"
+  #- "D:/waglar/checkpoints/potsdam/potsdam_fusion1_date_Mar13_22-40-51/epoch=0-step=1200.ckpt"
+  #- "D:/waglar/checkpoints/potsdam/potsdam_fusion1_date_Mar14_16-13-57/epoch=0-step=1200.ckpt"
+  #- "D:/waglar/checkpoints/potsdam/potsdam_fusion2_date_Apr10_13-25-47/epoch=4-step=3600.ckpt"
+  #- "D:/waglar/checkpoints/potsdam/potsdam_fusion2_date_Apr10_15-23-27/epoch=2-step=2400.ckpt"
+  #- "D:/waglar/checkpoints/potsdam/potsdam_fusion3_date_Apr10_17-02-26/epoch=11-step=9600.ckpt"
+  #- "D:/waglar/checkpoints/potsdam/potsdam_fusion3_date_Apr11_09-21-23/epoch=1-step=1200.ckpt"
+  #- "D:/waglar/checkpoints/potsdam/potsdam_fusion2_date_Apr11_12-14-44/epoch=14-step=12000.ckpt"
+  #- "D:/waglar/checkpoints/potsdam/potsdam_fusion2_date_Apr12_12-49-18/epoch=1-step=1200.ckpt"
+  #- "D:/waglar/checkpoints/potsdam/potsdam_fusion2_date_Apr19_13-31-45/epoch=2-step=2400.ckpt"
+  #- "D:/waglar/checkpoints/potsdam/potsdam_3cluster_date_Apr19_16-43-11/epoch=5-step=4800.ckpt"
+  - "D:/waglar/checkpoints/potsdam/potsdam_fusion1_date_Apr25_16-29-51/epoch=12-step=10800.ckpt"
+  #- "D:/waglar/checkpoints/potsdam/potsdam_fusion0_date_Apr25_18-50-17/epoch=12-step=10800.ckpt"
+  #- "D:/waglar/checkpoints/potsdam/potsdam_fusion3_date_Apr25_21-03-46/epoch=11-step=9600.ckpt"
 
 hydra:
   run:

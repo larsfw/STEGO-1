@@ -2,22 +2,22 @@ _version: 1
 
 output_root: "../"
 pytorch_data_dir: "D:/waglar/pytorch_datasets"
-experiment_name: "24cluster"
-log_dir: "ahrtal"
+experiment_name: "fusion1"
+log_dir: "potsdam"
 azureml_logging: False
 submitting_to_aml: False
 
-# Fusion params: fusion1, fusion2, fusion3
-fusion_type: "fusion1"
+# Fusion params: fusion0, fusion1, fusion2, fusion3, None
+fusion_type: fusion1
 fusion_weight: 0.0
 
 # Loader params
 num_workers: 24
-max_steps: 1500
-batch_size: 8
+max_steps: 16000
+batch_size: 16
 
 num_neighbors: 7
-dataset_name: "directory"
+dataset_name: "potsdam"
 
 # Used if dataset_name is "directory"
 dir_dataset_name: "ahrtal"

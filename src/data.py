@@ -11,6 +11,8 @@ from torch.utils.data import Dataset
 from torchvision.datasets.cityscapes import Cityscapes
 from torchvision.transforms.functional import to_pil_image
 from tqdm import tqdm
+from torchvision import transforms as T
+import torch.nn.functional as F
 
 
 def bit_get(val, idx):
@@ -125,12 +127,15 @@ class DirectoryDataset(Dataset):
 
 
 class Potsdam(Dataset):
-    def __init__(self, root, image_set, transform, target_transform, coarse_labels):
+    def __init__(
+        self, root, image_set, transform, target_transform, coarse_labels, cfg
+    ):
         super(Potsdam, self).__init__()
         self.split = image_set
         self.root = os.path.join(root, "potsdam")
         self.transform = transform
         self.target_transform = target_transform
+        self.cfg = cfg
         split_files = {
             "train": ["labelled_train.txt"],
             "unlabelled_train": ["unlabelled_train.txt"],
@@ -160,11 +165,20 @@ class Potsdam(Dataset):
     def __getitem__(self, index):
         image_id = self.files[index]
         img = loadmat(join(self.root, "imgs", image_id + ".mat"))["img"]
-        # if cfg.fusion_type == "fusion1":
-        #     img = to_pil_image(torch.from_numpy(img).permute(2, 0, 1)[:3])
-        img = to_pil_image(
-            torch.from_numpy(img).permute(2, 0, 1)[:3]
-        )  # TODO add ir channel back
+        if hasattr(self.cfg, "fusion_type"):
+            if self.cfg.fusion_type == "fusion0" or self.cfg.fusion_type == "fusion1":
+                # split the six channels into two images
+                img1 = to_pil_image(torch.from_numpy(img[:, :, :3]).permute(2, 0, 1))
+                img2 = to_pil_image(torch.from_numpy(img[:, :, 3:]).permute(2, 0, 1))
+            if self.cfg.fusion_type == "fusion2" or self.cfg.fusion_type == "fusion3":
+                # extract ndsm channel separately
+                ndsm = torch.from_numpy(img[:, :, 5]).unsqueeze(-1).permute(2, 0, 1)
+                img = to_pil_image(torch.from_numpy(img[:, :, :3]).permute(2, 0, 1))
+            else:
+                img = to_pil_image(torch.from_numpy(img).permute(2, 0, 1)[:3])
+        else:
+            img = to_pil_image(torch.from_numpy(img).permute(2, 0, 1)[:3])
+
         try:
             label = loadmat(join(self.root, "gt", image_id + ".mat"))["gt"]
             label = to_pil_image(torch.from_numpy(label).unsqueeze(-1).permute(2, 0, 1))
@@ -174,7 +188,19 @@ class Potsdam(Dataset):
         seed = np.random.randint(2147483647)
         random.seed(seed)
         torch.manual_seed(seed)
-        img = self.transform(img)
+        if hasattr(self, "cfg") and hasattr(self.cfg, "fusion_type"):
+            if self.cfg.fusion_type == "fusion0" or self.cfg.fusion_type == "fusion1":
+                img1 = self.transform(img1)
+                img2 = self.transform(img2)
+            elif self.cfg.fusion_type == "fusion2" or self.cfg.fusion_type == "fusion3":
+                img = self.transform(img)
+                ndsm = ndsm.to(torch.float32)
+                ndsm = T.Resize(img.shape[1], Image.NEAREST)(ndsm)
+                ndsm = T.Normalize(mean=[50.2], std=[59.5])(ndsm)
+            else:
+                img = self.transform(img)
+        else:
+            img = self.transform(img)
 
         random.seed(seed)
         torch.manual_seed(seed)
@@ -186,19 +212,128 @@ class Potsdam(Dataset):
             label = new_label_map
 
         mask = (label > 0).to(torch.float32)
-        return img, label, mask
+        if hasattr(self, "cfg") and hasattr(self.cfg, "fusion_type"):
+            if self.cfg.fusion_type == "fusion0" or self.cfg.fusion_type == "fusion1":
+                return img1, img2, label, mask
+            elif self.cfg.fusion_type == "fusion2" or self.cfg.fusion_type == "fusion3":
+                return img, ndsm, label, mask
+            else:
+                return img, label, mask
+        else:
+            return img, label, mask
+
+    def __len__(self):
+        return len(self.files)
+
+
+class Potsdam6(Dataset):
+    def __init__(
+        self, root, image_set, transform, target_transform, coarse_labels, cfg
+    ):
+        super(Potsdam6, self).__init__()
+        self.split = image_set
+        self.root = os.path.join(root, "potsdam")
+        self.transform = transform
+        self.target_transform = target_transform
+        self.cfg = cfg
+        split_files = {
+            "train": ["labelled_train.txt"],
+            "unlabelled_train": ["unlabelled_train.txt"],
+            # "train": ["unlabelled_train.txt"],
+            "val": ["labelled_test.txt"],
+            "train+val": ["labelled_train.txt", "labelled_test.txt"],
+            "all": ["all.txt"],
+        }
+        assert self.split in split_files.keys()
+
+        self.files = []
+        for split_file in split_files[self.split]:
+            with open(join(self.root, split_file), "r") as f:
+                self.files.extend(fn.rstrip() for fn in f.readlines())
+
+        self.coarse_labels = coarse_labels
+        self.fine_to_coarse = {
+            0: 0,  # roads
+            4: 4,  # cars
+            1: 1,  # buildings
+            5: 5,  # clutter
+            2: 2,  # vegetation
+            3: 3,  # trees
+            255: -1,
+        }
+
+    def __getitem__(self, index):
+        image_id = self.files[index]
+        img = loadmat(join(self.root, "imgs", image_id + ".mat"))["img"]
+        if hasattr(self, "cfg") and hasattr(self.cfg, "fusion_type"):
+            if self.cfg.fusion_type == "fusion0" or self.cfg.fusion_type == "fusion1":
+                # split the six channels into two images
+                img1 = to_pil_image(torch.from_numpy(img[:, :, :3]).permute(2, 0, 1))
+                img2 = to_pil_image(torch.from_numpy(img[:, :, 3:]).permute(2, 0, 1))
+            if self.cfg.fusion_type == "fusion2" or self.cfg.fusion_type == "fusion3":
+                # extract ndsm channel separately
+                img = to_pil_image(torch.from_numpy(img[:, :, :3]).permute(2, 0, 1))
+                ndsm = torch.from_numpy(img[:, :, 5]).permute(2, 0, 1)
+            else:
+                img = to_pil_image(torch.from_numpy(img).permute(2, 0, 1)[:3])
+        else:
+            img = to_pil_image(torch.from_numpy(img).permute(2, 0, 1)[:3])
+
+        try:
+            label = loadmat(join(self.root, "gt", image_id + ".mat"))["gt"]
+            label = to_pil_image(torch.from_numpy(label).unsqueeze(-1).permute(2, 0, 1))
+        except FileNotFoundError:
+            label = to_pil_image(torch.ones(1, img.height, img.width))
+
+        seed = np.random.randint(2147483647)
+        random.seed(seed)
+        torch.manual_seed(seed)
+        if hasattr(self, "cfg") and hasattr(self.cfg, "fusion_type"):
+            if self.cfg.fusion_type == "fusion0" or self.cfg.fusion_type == "fusion1":
+                img1 = self.transform(img1)
+                img2 = self.transform(img2)
+            elif self.cfg.fusion_type == "fusion2" or self.cfg.fusion_type == "fusion3":
+                img = self.transform(img)
+                ndsm = self.transform(ndsm)
+            else:
+                img = self.transform(img)
+        else:
+            img = self.transform(img)
+
+        random.seed(seed)
+        torch.manual_seed(seed)
+        label = self.target_transform(label).squeeze(0)
+        if self.coarse_labels:
+            new_label_map = torch.zeros_like(label)
+            for fine, coarse in self.fine_to_coarse.items():
+                new_label_map[label == fine] = coarse
+            label = new_label_map
+
+        mask = (label > 0).to(torch.float32)
+        if hasattr(self, "cfg") and hasattr(self.cfg, "fusion_type"):
+            if self.cfg.fusion_type == "fusion0" or self.cfg.fusion_type == "fusion1":
+                return img1, img2, label, mask
+            elif self.cfg.fusion_type == "fusion2" or self.cfg.fusion_type == "fusion3":
+                return img, ndsm, label, mask
+            else:
+                return img, label, mask
+        else:
+            return img, label, mask
 
     def __len__(self):
         return len(self.files)
 
 
 class PotsdamRaw(Dataset):
-    def __init__(self, root, image_set, transform, target_transform, coarse_labels):
+    def __init__(
+        self, root, image_set, transform, target_transform, coarse_labels, cfg
+    ):
         super(PotsdamRaw, self).__init__()
         self.split = image_set
         self.root = os.path.join(root, "potsdamraw", "processed")
         self.transform = transform
         self.target_transform = target_transform
+        self.cfg = cfg
         self.files = []
         for im_num in range(38):
             for i_h in range(15):
@@ -213,6 +348,94 @@ class PotsdamRaw(Dataset):
             5: 1,  # buildings and clutter
             2: 2,
             3: 2,  # vegetation and trees
+            255: -1,
+        }
+
+    def __getitem__(self, index):
+        image_id = self.files[index]
+        img = loadmat(join(self.root, "imgs", image_id))["img"]
+        if hasattr(self.cfg, "fusion_type"):
+            if self.cfg.fusion_type == "fusion0" or self.cfg.fusion_type == "fusion1":
+                # split the six channels into two images
+                img1 = to_pil_image(torch.from_numpy(img[:, :, :3]).permute(2, 0, 1))
+                img2 = to_pil_image(torch.from_numpy(img[:, :, 3:]).permute(2, 0, 1))
+            if self.cfg.fusion_type == "fusion2" or self.cfg.fusion_type == "fusion3":
+                # extract ndsm channel separately
+                ndsm = torch.from_numpy(img[:, :, 5]).unsqueeze(-1).permute(2, 0, 1)
+                img = to_pil_image(torch.from_numpy(img[:, :, :3]).permute(2, 0, 1))
+            else:
+                img = to_pil_image(torch.from_numpy(img).permute(2, 0, 1)[:3])
+        else:
+            img = to_pil_image(torch.from_numpy(img).permute(2, 0, 1)[:3])
+
+        try:
+            label = loadmat(join(self.root, "gt", image_id))["gt"]
+            label = to_pil_image(torch.from_numpy(label).unsqueeze(-1).permute(2, 0, 1))
+        except FileNotFoundError:
+            label = to_pil_image(torch.ones(1, img.height, img.width))
+
+        seed = np.random.randint(2147483647)
+        random.seed(seed)
+        torch.manual_seed(seed)
+        if hasattr(self, "cfg") and hasattr(self.cfg, "fusion_type"):
+            if self.cfg.fusion_type == "fusion0" or self.cfg.fusion_type == "fusion1":
+                img1 = self.transform(img1)
+                img2 = self.transform(img2)
+            elif self.cfg.fusion_type == "fusion2" or self.cfg.fusion_type == "fusion3":
+                img = self.transform(img)
+                ndsm = ndsm.to(torch.float32)
+                ndsm = T.Resize(img.shape[1], Image.NEAREST)(ndsm)
+                ndsm = T.Normalize(mean=[50.2], std=[59.5])(ndsm)
+            else:
+                img = self.transform(img)
+        else:
+            img = self.transform(img)
+
+        random.seed(seed)
+        torch.manual_seed(seed)
+        label = self.target_transform(label).squeeze(0)
+        if self.coarse_labels:
+            new_label_map = torch.zeros_like(label)
+            for fine, coarse in self.fine_to_coarse.items():
+                new_label_map[label == fine] = coarse
+            label = new_label_map
+
+        mask = (label > 0).to(torch.float32)
+        if hasattr(self, "cfg") and hasattr(self.cfg, "fusion_type"):
+            if self.cfg.fusion_type == "fusion0" or self.cfg.fusion_type == "fusion1":
+                return img1, img2, label, mask
+            elif self.cfg.fusion_type == "fusion2" or self.cfg.fusion_type == "fusion3":
+                return img, ndsm, label, mask
+            else:
+                return img, label, mask
+        else:
+            return img, label, mask
+
+    def __len__(self):
+        return len(self.files)
+
+
+class PotsdamRaw6(Dataset):
+    def __init__(self, root, image_set, transform, target_transform, coarse_labels):
+        super(PotsdamRaw6, self).__init__()
+        self.split = image_set
+        self.root = os.path.join(root, "potsdamraw", "processed")
+        self.transform = transform
+        self.target_transform = target_transform
+        self.files = []
+        for im_num in range(38):
+            for i_h in range(15):
+                for i_w in range(15):
+                    self.files.append("{}_{}_{}.mat".format(im_num, i_h, i_w))
+
+        self.coarse_labels = coarse_labels
+        self.fine_to_coarse = {
+            0: 0,  # roads
+            4: 4,  # cars
+            1: 1,  # buildings
+            5: 5,  # clutter
+            2: 2,  # vegetation
+            3: 3,  # trees
             255: -1,
         }
 
@@ -661,14 +884,23 @@ class ContrastiveSegDataset(Dataset):
         self.pos_labels = pos_labels
         self.pos_images = pos_images
         self.extra_transform = extra_transform
+        self.cfg = cfg
 
         if dataset_name == "potsdam":
             self.n_classes = 3
             dataset_class = Potsdam
-            extra_args = dict(coarse_labels=True)
+            extra_args = dict(coarse_labels=True, cfg=cfg)
+        elif dataset_name == "potsdam6":
+            self.n_classes = 6
+            dataset_class = Potsdam6
+            extra_args = dict(coarse_labels=True, cfg=cfg)
         elif dataset_name == "potsdamraw":
             self.n_classes = 3
             dataset_class = PotsdamRaw
+            extra_args = dict(coarse_labels=True)
+        elif dataset_name == "potsdamraw6":
+            self.n_classes = 6
+            dataset_class = PotsdamRaw6
             extra_args = dict(coarse_labels=True)
         elif dataset_name == "directory":
             self.n_classes = cfg.dir_dataset_n_classes
@@ -719,6 +951,7 @@ class ContrastiveSegDataset(Dataset):
             image_set=self.image_set,
             transform=transform,
             target_transform=target_transform,
+            cfg=cfg,
             **extra_args
         )
 
@@ -781,15 +1014,43 @@ class ContrastiveSegDataset(Dataset):
         else:
             extra_trans = lambda i, x: x
 
-        ret = {
-            "ind": ind,
-            "img": extra_trans(ind, pack[0]),
-            "label": extra_trans(ind, pack[1]),
-        }
+        if hasattr(self, "cfg") and hasattr(self.cfg, "fusion_type"):
+            if self.cfg.fusion_type == "fusion0" or self.cfg.fusion_type == "fusion1":
+                ret = {
+                    "ind": ind,
+                    "img1": extra_trans(ind, pack[0]),
+                    "img2": extra_trans(ind, pack[1]),
+                    "label": extra_trans(ind, pack[2]),
+                }
+            elif self.cfg.fusion_type == "fusion2" or self.cfg.fusion_type == "fusion3":
+                ret = {
+                    "ind": ind,
+                    "img": extra_trans(ind, pack[0]),
+                    "ndsm": extra_trans(ind, pack[1]),
+                    "label": extra_trans(ind, pack[2]),
+                }
+            else:
+                ret = {
+                    "ind": ind,
+                    "img": extra_trans(ind, pack[0]),
+                    "label": extra_trans(ind, pack[1]),
+                }
+        else:
+            ret = {
+                "ind": ind,
+                "img": extra_trans(ind, pack[0]),
+                "label": extra_trans(ind, pack[1]),
+            }
 
         if self.pos_images:
             ret["img_pos"] = extra_trans(ind, pack_pos[0])
             ret["ind_pos"] = ind_pos
+            if hasattr(self, "cfg") and hasattr(self.cfg, "fusion_type"):
+                if (
+                    self.cfg.fusion_type == "fusion2"
+                    or self.cfg.fusion_type == "fusion3"
+                ):
+                    ret["ndsm_pos"] = extra_trans(ind, pack_pos[1])
 
         if self.mask:
             ret["mask"] = pack[2]

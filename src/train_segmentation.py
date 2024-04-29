@@ -127,16 +127,32 @@ class LitUnsupervisedSegmenter(pl.LightningModule):
                 cfg.granularity, cut_model, dim, cfg.continuous
             )
         elif cfg.arch == "dino":
-            self.net = DinoFeaturizer(dim, cfg)
+            if hasattr(self.cfg, "fusion_type"):
+                if self.cfg.fusion_type == "fusion0":
+                    self.net = DinoFeaturizer(dim, cfg)
+                elif self.cfg.fusion_type == "fusion1":
+                    self.net = DinoFeaturizerFusion1(dim, cfg)
+                elif self.cfg.fusion_type == "fusion2":
+                    self.net = DinoFeaturizerFusion2(dim, cfg)
+                elif self.cfg.fusion_type == "fusion3":
+                    self.net = DinoFeaturizerFusion3(dim, cfg)
+                else:
+                    self.net = DinoFeaturizer(dim, cfg)
+            else:
+                self.net = DinoFeaturizer(dim, cfg)
         else:
             raise ValueError("Unknown arch {}".format(cfg.arch))
 
-        self.train_cluster_probe = ClusterLookup(dim, n_classes)
-
-        self.cluster_probe = ClusterLookup(dim, n_classes + cfg.extra_clusters)
-        self.linear_probe = nn.Conv2d(dim, n_classes, (1, 1))
-
-        self.decoder = nn.Conv2d(dim, self.net.n_feats, (1, 1))
+        if hasattr(cfg, "fusion_type") and cfg.fusion_type == "fusion3":
+            self.train_cluster_probe = ClusterLookup(dim + 1, n_classes)
+            self.cluster_probe = ClusterLookup(dim + 1, n_classes + cfg.extra_clusters)
+            self.linear_probe = nn.Conv2d(dim + 1, n_classes, (1, 1))
+            self.decoder = nn.Conv2d(dim + 1, self.net.n_feats, (1, 1))
+        else:
+            self.train_cluster_probe = ClusterLookup(dim, n_classes)
+            self.cluster_probe = ClusterLookup(dim, n_classes + cfg.extra_clusters)
+            self.linear_probe = nn.Conv2d(dim, n_classes, (1, 1))
+            self.decoder = nn.Conv2d(dim, self.net.n_feats, (1, 1))
 
         self.cluster_metrics = UnsupervisedMetrics(
             "test/cluster/", n_classes, cfg.extra_clusters, True
@@ -184,16 +200,56 @@ class LitUnsupervisedSegmenter(pl.LightningModule):
 
         with torch.no_grad():
             ind = batch["ind"]
-            img = batch["img"]
+            if hasattr(self.cfg, "fusion_type"):
+                if (
+                    self.cfg.fusion_type == "fusion0"
+                    or self.cfg.fusion_type == "fusion1"
+                ):
+                    img1 = batch["img1"]
+                    img2 = batch["img2"]
+                elif (
+                    self.cfg.fusion_type == "fusion2"
+                    or self.cfg.fusion_type == "fusion3"
+                ):
+                    img = batch["img"]
+                    ndsm = batch["ndsm"]
+                    ndsm_pos = batch["ndsm_pos"]
+                else:
+                    img = batch["img"]
+            else:
+                img = batch["img"]
             img_aug = batch["img_aug"]
             coord_aug = batch["coord_aug"]
             img_pos = batch["img_pos"]
             label = batch["label"]
             label_pos = batch["label_pos"]
 
-        feats, code = self.net(img)
+        if hasattr(self.cfg, "fusion_type"):
+            if self.cfg.fusion_type == "fusion0":
+                feats1, code1 = self.net(img1)
+                feats2, code2 = self.net(img2)
+                feats = feats1 + feats2  # / 2
+                code = code1 + code2  # / 2
+            elif self.cfg.fusion_type == "fusion1":
+                feats, code = self.net(img1, img2)
+            elif self.cfg.fusion_type == "fusion2" or self.cfg.fusion_type == "fusion3":
+                feats, code = self.net(img, ndsm)
+            else:
+                feats, code = self.net(img)
+        else:
+            feats, code = self.net(img)
+
         if self.cfg.correspondence_weight > 0:
-            feats_pos, code_pos = self.net(img_pos)
+            if (
+                hasattr(self.cfg, "fusion_type")
+                and self.cfg.fusion_type == "fusion2"
+                or self.cfg.fusion_type == "fusion3"
+            ):
+                feats_pos, code_pos = self.net(img_pos, ndsm_pos)
+            elif hasattr(self.cfg, "fusion_type") and self.cfg.fusion_type == "fusion1":
+                feats_pos, code_pos = self.net(img_pos, img_pos)
+            else:
+                feats_pos, code_pos = self.net(img_pos)
         log_args = dict(sync_dist=False, rank_zero_only=True)
 
         if self.cfg.use_true_labels:
@@ -280,7 +336,14 @@ class LitUnsupervisedSegmenter(pl.LightningModule):
             loss += self.cfg.aug_alignment_weight * aug_alignment
 
         if self.cfg.crf_weight > 0:
-            crf = self.crf_loss_fn(resize(img, 56), norm(resize(code, 56))).mean()
+            if (
+                hasattr(self.cfg, "fusion_type")
+                and self.cfg.fusion_type == "fusion0"
+                or self.cfg.fusion_type == "fusion1"
+            ):
+                crf = self.crf_loss_fn(resize(img1, 56), norm(resize(code1, 56))).mean()
+            else:
+                crf = self.crf_loss_fn(resize(img, 56), norm(resize(code, 56))).mean()
             self.log("loss/crf", crf, **log_args)
             loss += self.cfg.crf_weight * crf
 
@@ -337,12 +400,37 @@ class LitUnsupervisedSegmenter(pl.LightningModule):
         self.logger.log_hyperparams(self.cfg, tb_metrics)
 
     def validation_step(self, batch, batch_idx):
-        img = batch["img"]
+        if hasattr(self.cfg, "fusion_type"):
+            if self.cfg.fusion_type == "fusion0" or self.cfg.fusion_type == "fusion1":
+                img1 = batch["img1"]
+                img2 = batch["img2"]
+            elif self.cfg.fusion_type == "fusion2" or self.cfg.fusion_type == "fusion3":
+                img = batch["img"]
+                ndsm = batch["ndsm"]
+            else:
+                img = batch["img"]
+        else:
+            img = batch["img"]
         label = batch["label"]
         self.net.eval()
 
         with torch.no_grad():
-            feats, code = self.net(img)
+            if hasattr(self.cfg, "fusion_type"):
+                if self.cfg.fusion_type == "fusion0":
+                    feats1, code1 = self.net(img1)
+                    feats2, code2 = self.net(img2)
+                    code = code1 + code2  # / 2
+                elif self.cfg.fusion_type == "fusion1":
+                    feats, code = self.net(img1, img2)
+                elif (
+                    self.cfg.fusion_type == "fusion2"
+                    or self.cfg.fusion_type == "fusion3"
+                ):
+                    feats, code = self.net(img, ndsm)
+                else:
+                    feats, code = self.net(img)
+            else:
+                feats, code = self.net(img)
             code = F.interpolate(
                 code, label.shape[-2:], mode="bilinear", align_corners=False
             )
@@ -355,12 +443,39 @@ class LitUnsupervisedSegmenter(pl.LightningModule):
             cluster_preds = cluster_preds.argmax(1)
             self.cluster_metrics.update(cluster_preds, label)
 
-            return {
-                "img": img[: self.cfg.n_images].detach().cpu(),
-                "linear_preds": linear_preds[: self.cfg.n_images].detach().cpu(),
-                "cluster_preds": cluster_preds[: self.cfg.n_images].detach().cpu(),
-                "label": label[: self.cfg.n_images].detach().cpu(),
-            }
+            if hasattr(self.cfg, "fusion_type"):
+                if (
+                    self.cfg.fusion_type == "fusion0"
+                    or self.cfg.fusion_type == "fusion1"
+                ):
+                    return {
+                        "img": img1[: self.cfg.n_images].detach().cpu(),
+                        "linear_preds": linear_preds[: self.cfg.n_images]
+                        .detach()
+                        .cpu(),
+                        "cluster_preds": cluster_preds[: self.cfg.n_images]
+                        .detach()
+                        .cpu(),
+                        "label": label[: self.cfg.n_images].detach().cpu(),
+                    }
+                else:
+                    return {
+                        "img": img[: self.cfg.n_images].detach().cpu(),
+                        "linear_preds": linear_preds[: self.cfg.n_images]
+                        .detach()
+                        .cpu(),
+                        "cluster_preds": cluster_preds[: self.cfg.n_images]
+                        .detach()
+                        .cpu(),
+                        "label": label[: self.cfg.n_images].detach().cpu(),
+                    }
+            else:
+                return {
+                    "img": img[: self.cfg.n_images].detach().cpu(),
+                    "linear_preds": linear_preds[: self.cfg.n_images].detach().cpu(),
+                    "cluster_preds": cluster_preds[: self.cfg.n_images].detach().cpu(),
+                    "label": label[: self.cfg.n_images].detach().cpu(),
+                }
 
     def validation_epoch_end(self, outputs) -> None:
         super().validation_epoch_end(outputs)
@@ -617,7 +732,7 @@ def my_app(cfg: DictConfig) -> None:
             gpu_args.pop("val_check_interval")
 
     else:
-        gpu_args = dict(gpus=-1, accelerator="cuda", val_check_interval=cfg.val_freq)
+        gpu_args = dict(accelerator="cuda", val_check_interval=cfg.val_freq)
         # gpu_args = dict(gpus=1, accelerator='ddp', val_check_interval=cfg.val_freq)
 
         if gpu_args["val_check_interval"] > len(train_loader) // 4:
