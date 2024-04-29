@@ -144,7 +144,8 @@ def my_app(cfg: DictConfig) -> None:
                             or model.cfg.fusion_type == "fusion1"
                         ):
                             img = batch["img1"].cuda()
-                        if (
+                            img2 = batch["img2"].cuda()
+                        elif (
                             model.cfg.fusion_type == "fusion2"
                             or model.cfg.fusion_type == "fusion3"
                         ):
@@ -164,6 +165,11 @@ def my_app(cfg: DictConfig) -> None:
                             feats, code1 = par_model(img, ndsm)
                             feats, code2 = par_model(
                                 img.flip(dims=[3]), ndsm.flip(dims=[3])
+                            )
+                        elif model.cfg.fusion_type == "fusion1":
+                            feats, code1 = par_model(img, img2)
+                            feats, code2 = par_model(
+                                img.flip(dims=[3]), img2.flip(dims=[3])
                             )
                         else:
                             feats, code1 = par_model(img)

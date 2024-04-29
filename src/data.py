@@ -951,7 +951,7 @@ class ContrastiveSegDataset(Dataset):
             image_set=self.image_set,
             transform=transform,
             target_transform=target_transform,
-            cfg=cfg,
+            #cfg=cfg,
             **extra_args
         )
 
