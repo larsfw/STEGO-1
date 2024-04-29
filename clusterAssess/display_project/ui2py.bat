@@ -1,0 +1,1 @@
+C:\OSGeo4W\apps\Python37\Scripts\pyuic5.bat GinLab_Gui.ui -o GinLab_Gui_d.py
